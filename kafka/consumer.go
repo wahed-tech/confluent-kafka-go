@@ -47,6 +47,7 @@ type Consumer struct {
 	rebalanceCb        RebalanceCb
 	appReassigned      bool
 	appRebalanceEnable bool // config setting
+	openTopParQueues   map[TopicPartition]*C.rd_kafka_queue_t
 }
 
 // Strings returns a human readable name for a Consumer instance
@@ -107,6 +108,12 @@ func (c *Consumer) Assign(partitions []TopicPartition) (err error) {
 		return newError(e)
 	}
 
+	c.openTopParQueues = make(map[TopicPartition]*C.rd_kafka_queue_t)
+	for _, tp := range partitions {
+		toppar := c.GetPartitionQueue(tp)
+		c.openTopParQueues[tp] = toppar
+		c.DisableQueueForwarding(toppar)
+	}
 	return nil
 }
 
@@ -117,6 +124,12 @@ func (c *Consumer) Unassign() (err error) {
 	e := C.rd_kafka_assign(c.handle.rk, nil)
 	if e != C.RD_KAFKA_RESP_ERR_NO_ERROR {
 		return newError(e)
+	}
+
+	for _, v := range c.openTopParQueues {
+		var parQueue *C.rd_kafka_queue_t
+		parQueue = v
+		C.rd_kafka_queue_destroy(parQueue)
 	}
 
 	return nil
@@ -254,8 +267,22 @@ func (c *Consumer) Seek(partition TopicPartition, timeoutMs int) error {
 //
 // Returns nil on timeout, else an Event
 func (c *Consumer) Poll(timeoutMs int) (event Event) {
-	ev, _ := c.handle.eventPoll(nil, timeoutMs, 1, nil)
+	ev, _ := c.handle.eventPoll(nil, timeoutMs, 1, nil, nil)
 	return ev
+}
+
+func (c *Consumer) PollPartition(toppar TopicPartition, timeoutMs int) (event Event) {
+	ev, _ := c.handle.eventPoll(nil, timeoutMs, 1, nil, c.openTopParQueues[toppar])
+	return ev
+}
+
+
+func (c *Consumer) GetPartitionQueue(toppar TopicPartition) *C.rd_kafka_queue_t {
+	return C.rd_kafka_queue_get_partition(c.handle.rk, C.CString(*toppar.Topic), C.int32_t(toppar.Partition))
+}
+
+func (c *Consumer) DisableQueueForwarding(partitionQueue *C.rd_kafka_queue_t) {
+		C.rd_kafka_queue_forward(partitionQueue, nil)
 }
 
 // Events returns the Events channel (if enabled)
@@ -479,7 +506,7 @@ func consumerReader(c *Consumer, termChan chan bool) {
 		case _ = <-termChan:
 			return
 		default:
-			_, term := c.handle.eventPoll(c.events, 100, 1000, termChan)
+			_, term := c.handle.eventPoll(c.events, 100, 1000, termChan, nil)
 			if term {
 				return
 			}
