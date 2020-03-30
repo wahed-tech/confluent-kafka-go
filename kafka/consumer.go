@@ -47,7 +47,12 @@ type Consumer struct {
 	rebalanceCb        RebalanceCb
 	appReassigned      bool
 	appRebalanceEnable bool // config setting
-	openTopParQueues   map[TopicPartition]*C.rd_kafka_queue_t
+	openTopParQueues   map[topicPartitionKey]*C.rd_kafka_queue_t
+}
+
+type topicPartitionKey struct {
+	Topic     string
+	Partition int32
 }
 
 // Strings returns a human readable name for a Consumer instance
@@ -107,14 +112,25 @@ func (c *Consumer) Assign(partitions []TopicPartition) (err error) {
 	if e != C.RD_KAFKA_RESP_ERR_NO_ERROR {
 		return newError(e)
 	}
+	return nil
+}
 
-	c.openTopParQueues = make(map[TopicPartition]*C.rd_kafka_queue_t)
+func (c *Consumer) SetReadFromPartition(partitions []TopicPartition) {
+	if len(c.openTopParQueues) > 0 {
+		c.CleanupPartitionQueues()
+	}
 	for _, tp := range partitions {
+		tpClone := topicPartitionKey{
+			Topic:     *tp.Topic,
+			Partition: tp.Partition,
+		}
 		toppar := c.GetPartitionQueue(tp)
-		c.openTopParQueues[tp] = toppar
+		if toppar == nil {
+			break
+		}
+		c.openTopParQueues[tpClone] = toppar
 		c.DisableQueueForwarding(toppar)
 	}
-	return nil
 }
 
 // Unassign the current set of partitions to consume.
@@ -125,14 +141,16 @@ func (c *Consumer) Unassign() (err error) {
 	if e != C.RD_KAFKA_RESP_ERR_NO_ERROR {
 		return newError(e)
 	}
+	return nil
+}
 
+func (c *Consumer) CleanupPartitionQueues() {
 	for _, v := range c.openTopParQueues {
 		var parQueue *C.rd_kafka_queue_t
 		parQueue = v
 		C.rd_kafka_queue_destroy(parQueue)
 	}
-
-	return nil
+	c.openTopParQueues = make(map[topicPartitionKey]*C.rd_kafka_queue_t)
 }
 
 // commit offsets for specified offsets.
@@ -272,7 +290,11 @@ func (c *Consumer) Poll(timeoutMs int) (event Event) {
 }
 
 func (c *Consumer) PollPartition(toppar TopicPartition, timeoutMs int) (event Event) {
-	ev, _ := c.handle.eventPoll(nil, timeoutMs, 1, nil, c.openTopParQueues[toppar])
+	tpClone := topicPartitionKey{
+		Topic:     *toppar.Topic,
+		Partition: toppar.Partition,
+	}
+	ev, _ := c.handle.eventPoll(nil, timeoutMs, 1, nil, c.openTopParQueues[tpClone])
 	return ev
 }
 
@@ -364,6 +386,11 @@ func (c *Consumer) Close() (err error) {
 		close(c.events)
 	}
 
+
+	if len(c.openTopParQueues) > 0 {
+		c.CleanupPartitionQueues()
+	}
+
 	C.rd_kafka_queue_destroy(c.handle.rkq)
 	c.handle.rkq = nil
 
@@ -418,7 +445,9 @@ func NewConsumer(conf *ConfigMap) (*Consumer, error) {
 		return nil, newErrorFromString(ErrInvalidArg, "Required property group.id not set")
 	}
 
-	c := &Consumer{}
+	c := &Consumer{
+		openTopParQueues: make(map[topicPartitionKey]*C.rd_kafka_queue_t),
+	}
 
 	v, err := confCopy.extract("go.application.rebalance.enable", false)
 	if err != nil {
