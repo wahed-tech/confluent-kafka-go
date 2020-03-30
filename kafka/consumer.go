@@ -112,6 +112,7 @@ func (c *Consumer) Assign(partitions []TopicPartition) (err error) {
 	if e != C.RD_KAFKA_RESP_ERR_NO_ERROR {
 		return newError(e)
 	}
+
 	return nil
 }
 
@@ -119,15 +120,18 @@ func (c *Consumer) SetReadFromPartition(partitions []TopicPartition) {
 	if len(c.openTopParQueues) > 0 {
 		c.CleanupPartitionQueues()
 	}
+
 	for _, tp := range partitions {
 		tpClone := topicPartitionKey{
 			Topic:     *tp.Topic,
 			Partition: tp.Partition,
 		}
+
 		toppar := c.GetPartitionQueue(tp)
 		if toppar == nil {
 			break
 		}
+
 		c.openTopParQueues[tpClone] = toppar
 		c.DisableQueueForwarding(toppar)
 	}
@@ -141,6 +145,7 @@ func (c *Consumer) Unassign() (err error) {
 	if e != C.RD_KAFKA_RESP_ERR_NO_ERROR {
 		return newError(e)
 	}
+
 	return nil
 }
 
@@ -150,6 +155,7 @@ func (c *Consumer) CleanupPartitionQueues() {
 		parQueue = v
 		C.rd_kafka_queue_destroy(parQueue)
 	}
+
 	c.openTopParQueues = make(map[topicPartitionKey]*C.rd_kafka_queue_t)
 }
 
@@ -294,6 +300,7 @@ func (c *Consumer) PollPartition(toppar TopicPartition, timeoutMs int) (event Ev
 		Topic:     *toppar.Topic,
 		Partition: toppar.Partition,
 	}
+
 	ev, _ := c.handle.eventPoll(nil, timeoutMs, 1, nil, c.openTopParQueues[tpClone])
 	return ev
 }
@@ -385,7 +392,6 @@ func (c *Consumer) Close() (err error) {
 	if c.eventsChanEnable {
 		close(c.events)
 	}
-
 
 	if len(c.openTopParQueues) > 0 {
 		c.CleanupPartitionQueues()
