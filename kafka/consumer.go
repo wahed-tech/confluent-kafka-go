@@ -47,6 +47,7 @@ type Consumer struct {
 	rebalanceCb        RebalanceCb
 	appReassigned      bool
 	appRebalanceEnable bool // config setting
+	readFromPartition  bool
 	openTopParQueues   map[topicPartitionKey]*C.rd_kafka_queue_t
 }
 
@@ -113,12 +114,32 @@ func (c *Consumer) Assign(partitions []TopicPartition) (err error) {
 		return newError(e)
 	}
 
+	if c.readFromPartition {
+		c.openPartitionQueues(partitions)
+	}
+
 	return nil
 }
 
-func (c *Consumer) SetReadFromPartition(partitions []TopicPartition) {
+// Unassign the current set of partitions to consume.
+func (c *Consumer) Unassign() (err error) {
+	c.appReassigned = true
+
+	e := C.rd_kafka_assign(c.handle.rk, nil)
+	if e != C.RD_KAFKA_RESP_ERR_NO_ERROR {
+		return newError(e)
+	}
+
+	if c.readFromPartition {
+		c.closePartitionQueues()
+	}
+
+	return nil
+}
+
+func (c *Consumer) openPartitionQueues(partitions []TopicPartition) {
 	if len(c.openTopParQueues) > 0 {
-		c.CleanupPartitionQueues()
+		c.closePartitionQueues()
 	}
 
 	for _, tp := range partitions {
@@ -132,24 +153,12 @@ func (c *Consumer) SetReadFromPartition(partitions []TopicPartition) {
 			break
 		}
 
-		c.openTopParQueues[tpClone] = toppar
 		c.DisableQueueForwarding(toppar)
+		c.openTopParQueues[tpClone] = toppar
 	}
 }
 
-// Unassign the current set of partitions to consume.
-func (c *Consumer) Unassign() (err error) {
-	c.appReassigned = true
-
-	e := C.rd_kafka_assign(c.handle.rk, nil)
-	if e != C.RD_KAFKA_RESP_ERR_NO_ERROR {
-		return newError(e)
-	}
-
-	return nil
-}
-
-func (c *Consumer) CleanupPartitionQueues() {
+func (c *Consumer) closePartitionQueues() {
 	for _, v := range c.openTopParQueues {
 		var parQueue *C.rd_kafka_queue_t
 		parQueue = v
@@ -301,7 +310,11 @@ func (c *Consumer) PollPartition(toppar TopicPartition, timeoutMs int) (event Ev
 		Partition: toppar.Partition,
 	}
 
-	ev, _ := c.handle.eventPoll(nil, timeoutMs, 1, nil, c.openTopParQueues[tpClone])
+	partitionQueue, ok := c.openTopParQueues[tpClone]
+	if !ok {
+		return nil
+	}
+	ev, _ := c.handle.eventPoll(nil, timeoutMs, 1, nil, partitionQueue)
 	return ev
 }
 
@@ -393,8 +406,8 @@ func (c *Consumer) Close() (err error) {
 		close(c.events)
 	}
 
-	if len(c.openTopParQueues) > 0 {
-		c.CleanupPartitionQueues()
+	if c.readFromPartition {
+		c.closePartitionQueues()
 	}
 
 	C.rd_kafka_queue_destroy(c.handle.rkq)
@@ -421,6 +434,9 @@ func (c *Consumer) Close() (err error) {
 //                                        If set to true the app must handle the AssignedPartitions and
 //                                        RevokedPartitions events and call Assign() and Unassign()
 //                                        respectively.
+//   go.application.read.from.partition (bool, false) - Disables Queue forwarding of messages from partition queue to common queue.
+//											Has to enable go.application.rebalance.enable.
+//											If set to true, use PollPartition to get kafka messages, and Poll for all other kafka events.
 //   go.events.channel.enable (bool, false) - Enable the Events() channel. Messages and events will be pushed on the Events() channel and the Poll() interface will be disabled. (Experimental)
 //   go.events.channel.size (int, 1000) - Events() channel size
 //   go.logs.channel.enable (bool, false) - Forward log to Logs() channel.
@@ -460,6 +476,12 @@ func NewConsumer(conf *ConfigMap) (*Consumer, error) {
 		return nil, err
 	}
 	c.appRebalanceEnable = v.(bool)
+
+	v, err = confCopy.extract("go.application.read.from.partition", false)
+	if err != nil {
+		return nil, err
+	}
+	c.readFromPartition = v.(bool)
 
 	v, err = confCopy.extract("go.events.channel.enable", false)
 	if err != nil {
