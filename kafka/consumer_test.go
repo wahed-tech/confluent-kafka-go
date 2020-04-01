@@ -390,10 +390,10 @@ func TestConsumerLog(t *testing.T) {
 
 func TestReadFromPartition(t *testing.T) {
 	c, err := NewConsumer(&ConfigMap{
-		"group.id":                 	"gotest",
-		"socket.timeout.ms":        	10,
-		"session.timeout.ms":       	10,
-		"enable.auto.offset.store": 	false, // permit StoreOffsets()
+		"group.id":                      "gotest",
+		"socket.timeout.ms":             10,
+		"session.timeout.ms":            10,
+		"enable.auto.offset.store":      false, // permit StoreOffsets()
 		"go.enable.read.from.partition": true,
 	})
 	if err != nil {
