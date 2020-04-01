@@ -115,7 +115,7 @@ func (c *Consumer) Assign(partitions []TopicPartition) (err error) {
 	}
 
 	if c.readFromPartition {
-		c.openPartitionQueues(partitions)
+		c.enableReadFromPartition(partitions)
 	}
 
 	return nil
@@ -137,7 +137,7 @@ func (c *Consumer) Unassign() (err error) {
 	return nil
 }
 
-func (c *Consumer) openPartitionQueues(partitions []TopicPartition) {
+func (c *Consumer) enableReadFromPartition(partitions []TopicPartition) {
 	if len(c.openTopParQueues) > 0 {
 		c.closePartitionQueues()
 	}
@@ -148,12 +148,12 @@ func (c *Consumer) openPartitionQueues(partitions []TopicPartition) {
 			Partition: tp.Partition,
 		}
 
-		toppar := c.GetPartitionQueue(tp)
+		toppar := c.getPartitionQueue(tp)
 		if toppar == nil {
-			break
+			continue
 		}
 
-		c.DisableQueueForwarding(toppar)
+		c.disableQueueForwarding(toppar)
 		c.openTopParQueues[tpClone] = toppar
 	}
 }
@@ -304,6 +304,16 @@ func (c *Consumer) Poll(timeoutMs int) (event Event) {
 	return ev
 }
 
+// Poll the partition queue for messages.
+//
+// Can be used only if go.enable.read.from.partition in enabled and for Topic Partitions where Assign() has been called. Otherwise returns nil
+//
+// Will block for at most timeoutMs milliseconds
+//
+// The following callbacks may be triggered:
+//   Subscribe()'s rebalanceCb
+//
+// Returns nil on timeout, else an Event
 func (c *Consumer) PollPartition(toppar TopicPartition, timeoutMs int) (event Event) {
 	tpClone := topicPartitionKey{
 		Topic:     *toppar.Topic,
@@ -319,12 +329,12 @@ func (c *Consumer) PollPartition(toppar TopicPartition, timeoutMs int) (event Ev
 }
 
 
-func (c *Consumer) GetPartitionQueue(toppar TopicPartition) *C.rd_kafka_queue_t {
+func (c *Consumer) getPartitionQueue(toppar TopicPartition) *C.rd_kafka_queue_t {
 	return C.rd_kafka_queue_get_partition(c.handle.rk, C.CString(*toppar.Topic), C.int32_t(toppar.Partition))
 }
 
-func (c *Consumer) DisableQueueForwarding(partitionQueue *C.rd_kafka_queue_t) {
-		C.rd_kafka_queue_forward(partitionQueue, nil)
+func (c *Consumer) disableQueueForwarding(partitionQueue *C.rd_kafka_queue_t) {
+	C.rd_kafka_queue_forward(partitionQueue, nil)
 }
 
 // Events returns the Events channel (if enabled)
@@ -434,9 +444,10 @@ func (c *Consumer) Close() (err error) {
 //                                        If set to true the app must handle the AssignedPartitions and
 //                                        RevokedPartitions events and call Assign() and Unassign()
 //                                        respectively.
-//   go.application.read.from.partition (bool, false) - Disables Queue forwarding of messages from partition queue to common queue.
-//											Has to enable go.application.rebalance.enable.
-//											If set to true, use PollPartition to get kafka messages, and Poll for all other kafka events.
+//   go.enable.read.from.partition (bool, false) - Enables to read messages from one partition.
+//											If set to true, disables Queue forwarding on calling Assign(). Then use PollPartition() to get kafka messages
+//											Call Unassign() to cleanup the partition queues.
+//											Call Poll() to receive other kafka events
 //   go.events.channel.enable (bool, false) - Enable the Events() channel. Messages and events will be pushed on the Events() channel and the Poll() interface will be disabled. (Experimental)
 //   go.events.channel.size (int, 1000) - Events() channel size
 //   go.logs.channel.enable (bool, false) - Forward log to Logs() channel.
@@ -477,7 +488,7 @@ func NewConsumer(conf *ConfigMap) (*Consumer, error) {
 	}
 	c.appRebalanceEnable = v.(bool)
 
-	v, err = confCopy.extract("go.application.read.from.partition", false)
+	v, err = confCopy.extract("go.enable.read.from.partition", false)
 	if err != nil {
 		return nil, err
 	}
