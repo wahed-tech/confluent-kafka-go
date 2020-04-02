@@ -166,25 +166,54 @@ func eventTestPollConsumer(c *Consumer, mt *msgtracker, expCnt int) {
 }
 
 // consume messages through the PollPartition() interface
-func eventTestPollPartition(toppar TopicPartition) func(c *Consumer, mt *msgtracker, expCnt int) {
+func eventTestPollPartition() func(c *Consumer, mt *msgtracker, expCnt int) {
 
 	return func(c *Consumer, mt *msgtracker, expCnt int) {
 
-		if err := c.Assign([]TopicPartition{toppar}); err != nil {
-			mt.t.Fatalf("Assign partition %v failed. Error: %v", toppar, err)
-			return
-		}
-		defer c.Unassign()
-		for true {
-			ev := c.PollPartition(toppar, 100)
-			if ev == nil {
-				// timeout
-				continue
+		done := false
+		go func() {
+			for !done {
+				evt := c.Poll(100)
+				switch msg := evt.(type) {
+				case *Message:
+					mt.t.Fatalf("Consumer error, should not receive msg via Poll Interface: %v", msg)
+				case PartitionEOF:
+					break // silence
+				default:
+					mt.t.Fatalf("Consumer error: %v", msg)
+				}
 			}
-			if !handleTestEvent(c, mt, expCnt, ev) {
-				break
-			}
+		}()
+
+		ch := make(chan struct{})
+		for k, _ := range c.openTopParQueues {
+			go func() {
+				for !done {
+					ev := c.PollPartition(TopicPartition{Topic: &k.Topic, Partition: k.Partition}, 100)
+					if ev == nil {
+						// timeout
+						continue
+					}
+					if !handleTestEvent(c, mt, expCnt, ev) {
+						break
+					}
+				}
+				if !done {
+					ch <- struct{}{}
+				}
+			}()
 		}
+		<-ch // wait until first goroutine to finish
+		done = true
+		closeAndDrainChannel(ch)
+	}
+}
+
+func closeAndDrainChannel(ch chan struct{}) {
+	close(ch)
+	_, ok := <-ch
+	for ok {
+		_, ok = <-ch
 	}
 }
 
@@ -932,20 +961,17 @@ func TestConsumerCommitted(t *testing.T) {
 
 // test consumer poll-based API
 func TestConsumerPollPartition(t *testing.T) {
-	tp := TopicPartition{Topic: &testconf.Topic, Partition: 0}
-	consumerTestWithCommits(t, "Poll Consumer", 0, false, true, eventTestPollPartition(tp), rebalanceFn(t))
+	consumerTestWithCommits(t, "Poll Consumer", 0, false, true, eventTestPollPartition(), rebalanceFn(t))
 }
 
 // test consumer poll-based API with rebalance callback
 func TestConsumerPollPartitionRebalance(t *testing.T) {
-	tp := TopicPartition{Topic: &testconf.Topic, Partition: 0}
-	consumerTestWithCommits(t, "Poll Consumer (rebalance callback)", 0, false, true, eventTestPollPartition(tp), rebalanceFn(t))
+	consumerTestWithCommits(t, "Poll Consumer (rebalance callback)", 0, false, true, eventTestPollPartition(), rebalanceFn(t))
 }
 
 // Test Committed() API
 func TestConsumerPollPartitionCommitted(t *testing.T) {
-	tp := TopicPartition{Topic: &testconf.Topic, Partition: 0}
-	consumerTestWithCommits(t, "Poll Consumer (rebalance callback, verify Committed())", 0, false, true, eventTestPollPartition(tp),
+	consumerTestWithCommits(t, "Poll Consumer (rebalance callback, verify Committed())", 0, false, true, eventTestPollPartition(),
 		func(c *Consumer, event Event) error {
 			_ = validateCommitsOnRevokedPartitions(t)(c, event)
 			return rebalanceFn(t)(c, event)
