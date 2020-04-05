@@ -171,48 +171,52 @@ func eventTestReadFromPartition() func(c *Consumer, mt *msgtracker, expCnt int) 
 	return func(c *Consumer, mt *msgtracker, expCnt int) {
 
 		done := false
+
+		pollForNonMessageEvents := func (done *bool, c *Consumer, mt *msgtracker) {
+			for !*done {
+				evt := c.Poll(100)
+				switch msg := evt.(type) {
+				case *Message:
+					mt.t.Fatalf("Consumer error, should not receive msg via Poll Interface: %v", msg)
+				case PartitionEOF:
+					break // silence
+				default:
+					mt.t.Fatalf("Consumer error: %v", msg)
+				}
+			}
+		}
+
+		doneChan := make(chan struct{}, len(c.openTopParQueues))
+		readMessages := func(k topicPartitionKey) {
+			for !done {
+				ev, err := c.ReadFromPartition(TopicPartition{Topic: &k.Topic, Partition: k.Partition}, 100)
+				if err != nil {
+					mt.t.Fatalf("Consumer error: %v", err)
+					break
+				}
+				if ev == nil {
+					mt.t.Log("nil event")
+					continue
+				}
+				if !handleTestEvent(c, mt, expCnt, ev) {
+					break
+				}
+			}
+			doneChan <- struct{}{}
+			done = true
+		}
+
 		go pollForNonMessageEvents(&done, c, mt)
 		mt.t.Log(fmt.Sprintf("%d partitions", len(c.openTopParQueues)))
-		ch := make(chan struct{}, len(c.openTopParQueues))
-		for k, _ := range c.openTopParQueues {
-			go func() {
-				for !done {
-					ev, err := c.ReadFromPartition(TopicPartition{Topic: &k.Topic, Partition: k.Partition}, 100)
-					if err != nil {
-						mt.t.Fatalf("Consumer error: %v", err)
-						break
-					}
-					if ev == nil {
-						mt.t.Log("nil event")
-						continue
-					}
-					if !handleTestEvent(c, mt, expCnt, ev) {
-						break
-					}
-				}
-				ch <- struct{}{}
-			}()
+		for toppar, _ := range c.openTopParQueues {
+			go readMessages(toppar)
 		}
+
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute*1)
 		select {
-		case <-ch: // wait until first goroutine to finish
+		case <-doneChan: // wait until first goroutine to finish
 			cancel()
 		case <-ctx.Done():
-		}
-		done = true
-	}
-}
-
-func pollForNonMessageEvents(done *bool, c *Consumer, mt *msgtracker) {
-	for !*done {
-		evt := c.Poll(100)
-		switch msg := evt.(type) {
-		case *Message:
-			mt.t.Fatalf("Consumer error, should not receive msg via Poll Interface: %v", msg)
-		case PartitionEOF:
-			break // silence
-		default:
-			mt.t.Fatalf("Consumer error: %v", msg)
 		}
 	}
 }
