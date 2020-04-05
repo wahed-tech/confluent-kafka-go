@@ -192,6 +192,7 @@ func eventTestReadFromPartition() func(c *Consumer, mt *msgtracker, expCnt int) 
 					ev, err := c.ReadFromPartition(TopicPartition{Topic: &k.Topic, Partition: k.Partition}, 100)
 					if err != nil {
 						mt.t.Fatalf("Consumer error: %v", err)
+						break
 					}
 					if ev == nil {
 						// timeout
