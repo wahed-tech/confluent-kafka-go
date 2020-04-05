@@ -185,7 +185,7 @@ func eventTestReadFromPartition() func(c *Consumer, mt *msgtracker, expCnt int) 
 			}
 		}()
 
-		ch := make(chan struct{})
+		ch := make(chan struct{}, 10)
 		for k, _ := range c.openTopParQueues {
 			go func() {
 				for !done {
@@ -209,15 +209,6 @@ func eventTestReadFromPartition() func(c *Consumer, mt *msgtracker, expCnt int) 
 		}
 		<-ch // wait until first goroutine to finish
 		done = true
-		closeAndDrainChannel(ch)
-	}
-}
-
-func closeAndDrainChannel(ch chan struct{}) {
-	close(ch)
-	_, ok := <-ch
-	for ok {
-		_, ok = <-ch
 	}
 }
 
