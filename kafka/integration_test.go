@@ -243,10 +243,10 @@ func handleTestEvent(c *Consumer, mt *msgtracker, expCnt int, ev Event) bool {
 		}
 		mt.msgs[mt.msgcnt] = e
 		mt.msgcnt++
+		mt.t.Log(fmt.Sprintf("mt.msgcnt, %d", mt.msgcnt))
 		if mt.msgcnt >= int64(expCnt) {
 			return false
 		}
-		mt.t.Log("counted message")
 	case PartitionEOF:
 		break // silence
 	default:

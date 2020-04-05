@@ -114,9 +114,9 @@ func (c *Consumer) Assign(partitions []TopicPartition) (err error) {
 		return newError(e)
 	}
 
-	//if c.readFromPartition {
-	//	c.enableReadFromPartition(partitions)
-	//}
+	if c.readFromPartition {
+		c.enableReadFromPartition(partitions)
+	}
 
 	return nil
 }
@@ -130,9 +130,9 @@ func (c *Consumer) Unassign() (err error) {
 		return newError(e)
 	}
 
-	//if c.readFromPartition {
-	//	c.closePartitionQueues()
-	//}
+	if c.readFromPartition {
+		c.closePartitionQueues()
+	}
 
 	return nil
 }
