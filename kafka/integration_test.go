@@ -405,7 +405,7 @@ func consumerTest(t *testing.T, testname string, msgcnt int, cc consumerCtrl, co
 		"api.version.request":           "true",
 		"enable.auto.commit":            cc.autoCommit,
 		"debug":                         ",",
-		"log_level":					 7,
+		"log_level":                     7,
 		"auto.offset.reset":             "earliest",
 		"go.enable.read.from.partition": cc.readFromPartitionQueue,
 	}
