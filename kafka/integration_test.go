@@ -171,7 +171,6 @@ func eventTestReadFromPartition() func(c *Consumer, mt *msgtracker, expCnt int) 
 	return func(c *Consumer, mt *msgtracker, expCnt int) {
 
 		done := false
-
 		pollForNonMessageEvents := func(done *bool, c *Consumer, mt *msgtracker) {
 			for !*done {
 				evt := c.Poll(100)
@@ -216,11 +215,12 @@ func eventTestReadFromPartition() func(c *Consumer, mt *msgtracker, expCnt int) 
 			go readMessages(toppar)
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), time.Minute*1)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
 		select {
 		case <-doneChan: // wait until first goroutine to finish
 			cancel()
 		case <-ctx.Done():
+			done = true
 		}
 	}
 }

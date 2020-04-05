@@ -377,6 +377,9 @@ func (c *Consumer) ReadFromPartition(toppar TopicPartition, timeout time.Duratio
 	}
 
 	partitionQueue := c.getPartitionQueue(toppar)
+	if partitionQueue == nil {
+		return nil, newErrorFromString(C.RD_KAFKA_RESP_ERR_INVALID_PARTITIONS, "C.rd_kafka_queue_get_partition returned nil")
+	}
 	c.disableQueueForwarding(partitionQueue)
 	defer C.rd_kafka_queue_destroy(partitionQueue)
 	pollFn := func(timeoutMs int) Event {
