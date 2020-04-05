@@ -180,11 +180,13 @@ func eventTestReadFromPartition() func(c *Consumer, mt *msgtracker, expCnt int) 
 				}
 				switch msg := evt.(type) {
 				case *Message:
-					mt.t.Fatalf("Consumer error, should not receive msg via Poll Interface: %v", msg)
+					mt.t.Errorf("Consumer error, should not receive msg via Poll Interface: %v", msg)
+					*done = true
 				case PartitionEOF:
 					break // silence
 				default:
-					mt.t.Fatalf("Consumer error: %v", msg)
+					mt.t.Errorf("Consumer error: %v", msg)
+					*done = true
 				}
 			}
 		}
@@ -194,7 +196,7 @@ func eventTestReadFromPartition() func(c *Consumer, mt *msgtracker, expCnt int) 
 			for !done {
 				ev, err := c.ReadFromPartition(TopicPartition{Topic: &k.Topic, Partition: k.Partition}, 100)
 				if err != nil {
-					mt.t.Fatalf("Consumer error: %v", err)
+					mt.t.Errorf("Consumer error: %v", err)
 					break
 				}
 				if ev == nil {
