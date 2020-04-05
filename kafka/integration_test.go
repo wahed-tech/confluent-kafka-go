@@ -175,6 +175,10 @@ func eventTestReadFromPartition() func(c *Consumer, mt *msgtracker, expCnt int) 
 		pollForNonMessageEvents := func(done *bool, c *Consumer, mt *msgtracker) {
 			for !*done {
 				evt := c.Poll(100)
+				if evt == nil {
+					// timeout
+					continue
+				}
 				switch msg := evt.(type) {
 				case *Message:
 					mt.t.Fatalf("Consumer error, should not receive msg via Poll Interface: %v", msg)
