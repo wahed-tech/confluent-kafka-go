@@ -172,7 +172,7 @@ func eventTestReadFromPartition() func(c *Consumer, mt *msgtracker, expCnt int) 
 
 		done := false
 
-		pollForNonMessageEvents := func (done *bool, c *Consumer, mt *msgtracker) {
+		pollForNonMessageEvents := func(done *bool, c *Consumer, mt *msgtracker) {
 			for !*done {
 				evt := c.Poll(100)
 				switch msg := evt.(type) {
@@ -393,14 +393,17 @@ func consumerTest(t *testing.T, testname string, msgcnt int, cc consumerCtrl, co
 		msgcnt = len(p0TestMsgs)
 	}
 
-	conf := ConfigMap{"bootstrap.servers": testconf.Brokers,
-		"go.events.channel.enable": cc.useChannel,
-		"group.id":                 testconf.GroupID,
-		"session.timeout.ms":       6000,
-		"api.version.request":      "true",
-		"enable.auto.commit":       cc.autoCommit,
-		"debug":                    ",",
-		"auto.offset.reset":        "earliest"}
+	conf := ConfigMap{
+		"bootstrap.servers":             testconf.Brokers,
+		"go.events.channel.enable":      cc.useChannel,
+		"group.id":                      testconf.GroupID,
+		"session.timeout.ms":            6000,
+		"api.version.request":           "true",
+		"enable.auto.commit":            cc.autoCommit,
+		"debug":                         ",",
+		"auto.offset.reset":             "earliest",
+		"go.enable.read.from.partition": cc.readFromPartitionQueue,
+	}
 
 	conf.updateFromTestconf()
 
