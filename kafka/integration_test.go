@@ -165,8 +165,8 @@ func eventTestPollConsumer(c *Consumer, mt *msgtracker, expCnt int) {
 	}
 }
 
-// consume messages through the PollPartition() interface
-func eventTestPollPartition() func(c *Consumer, mt *msgtracker, expCnt int) {
+// consume messages through the ReadFromPartition() interface
+func eventTestReadFromPartition() func(c *Consumer, mt *msgtracker, expCnt int) {
 
 	return func(c *Consumer, mt *msgtracker, expCnt int) {
 
@@ -189,7 +189,10 @@ func eventTestPollPartition() func(c *Consumer, mt *msgtracker, expCnt int) {
 		for k, _ := range c.openTopParQueues {
 			go func() {
 				for !done {
-					ev := c.PollPartition(TopicPartition{Topic: &k.Topic, Partition: k.Partition}, 100)
+					ev, err := c.ReadFromPartition(TopicPartition{Topic: &k.Topic, Partition: k.Partition}, 100)
+					if err != nil {
+						mt.t.Fatalf("Consumer error: %v", err)
+					}
 					if ev == nil {
 						// timeout
 						continue
@@ -960,18 +963,18 @@ func TestConsumerCommitted(t *testing.T) {
 }
 
 // test consumer poll-based API
-func TestConsumerPollPartition(t *testing.T) {
-	consumerTestWithCommits(t, "Poll Consumer", 0, false, true, eventTestPollPartition(), rebalanceFn(t))
+func TestConsumerReadFromPartition(t *testing.T) {
+	consumerTestWithCommits(t, "Poll Consumer", 0, false, true, eventTestReadFromPartition(), rebalanceFn(t))
 }
 
 // test consumer poll-based API with rebalance callback
-func TestConsumerPollPartitionRebalance(t *testing.T) {
-	consumerTestWithCommits(t, "Poll Consumer (rebalance callback)", 0, false, true, eventTestPollPartition(), rebalanceFn(t))
+func TestConsumerReadFromPartitionRebalance(t *testing.T) {
+	consumerTestWithCommits(t, "Poll Consumer (rebalance callback)", 0, false, true, eventTestReadFromPartition(), rebalanceFn(t))
 }
 
 // Test Committed() API
-func TestConsumerPollPartitionCommitted(t *testing.T) {
-	consumerTestWithCommits(t, "Poll Consumer (rebalance callback, verify Committed())", 0, false, true, eventTestPollPartition(),
+func TestConsumerReadFromPartitionCommitted(t *testing.T) {
+	consumerTestWithCommits(t, "Poll Consumer (rebalance callback, verify Committed())", 0, false, true, eventTestReadFromPartition(),
 		func(c *Consumer, event Event) error {
 			_ = validateCommitsOnRevokedPartitions(t)(c, event)
 			return rebalanceFn(t)(c, event)

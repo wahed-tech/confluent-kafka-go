@@ -304,30 +304,6 @@ func (c *Consumer) Poll(timeoutMs int) (event Event) {
 	return ev
 }
 
-// Poll the partition queue for messages.
-//
-// Can be used only if go.enable.read.from.partition in enabled and for Topic Partitions where Assign() has been called. Otherwise returns nil
-//
-// Will block for at most timeoutMs milliseconds
-//
-// The following callbacks may be triggered:
-//   Subscribe()'s rebalanceCb
-//
-// Returns nil on timeout, else an Event
-func (c *Consumer) PollPartition(toppar TopicPartition, timeoutMs int) (event Event) {
-	tpClone := topicPartitionKey{
-		Topic:     *toppar.Topic,
-		Partition: toppar.Partition,
-	}
-
-	partitionQueue, ok := c.openTopParQueues[tpClone]
-	if !ok {
-		return nil
-	}
-	ev, _ := c.handle.eventPoll(nil, timeoutMs, 1, nil, partitionQueue)
-	return ev
-}
-
 func (c *Consumer) getPartitionQueue(toppar TopicPartition) *C.rd_kafka_queue_t {
 	return C.rd_kafka_queue_get_partition(c.handle.rk, C.CString(*toppar.Topic), C.int32_t(toppar.Partition))
 }
@@ -366,6 +342,49 @@ func (c *Consumer) Logs() chan LogEvent {
 //
 func (c *Consumer) ReadMessage(timeout time.Duration) (*Message, error) {
 
+	return readMessage(timeout, c.Poll)
+}
+
+// ReadFromPartition polls the partition queue for a message.
+// Returns err if go.enable.read.from.partition is not enabled, or Assign() has not been called.
+// This API that only returns messages or errors.
+//
+// The call will block for at most `timeout` waiting for
+// a new message or error. `timeout` may be set to -1 for
+// indefinite wait.
+//
+// Timeout is returned as (nil, err) where err is `kafka.(Error).Code == Kafka.ErrTimedOut`.
+// Reading from unassigned partition is returned as (nil, err) where
+// err is `kafka.(Error).Code == Kafka.ErrInvalidPartitions`.
+//
+// Messages are returned as (msg, nil),
+// while general errors are returned as (nil, err),
+// and partition-specific errors are returned as (msg, err) where
+// msg.TopicPartition provides partition-specific information (such as topic, partition and offset).
+//
+//
+func (c *Consumer) ReadFromPartition(toppar TopicPartition, timeout time.Duration) (*Message, error) {
+
+	tpClone := topicPartitionKey{
+		Topic:     *toppar.Topic,
+		Partition: toppar.Partition,
+	}
+
+	partitionQueue, ok := c.openTopParQueues[tpClone]
+	if !ok {
+		return nil, newErrorFromString(C.RD_KAFKA_RESP_ERR_INVALID_PARTITIONS, "readFromPartition not enabled or Partition not assigned")
+	}
+
+	pollFn := func(timeoutMs int) Event {
+		ev, _ := c.handle.eventPoll(nil, timeoutMs, 1, nil, partitionQueue)
+		return ev
+	}
+
+	return readMessage(timeout, pollFn)
+}
+
+func readMessage(timeout time.Duration, pollFn func(timeoutMs int) Event) (*Message, error) {
+
 	var absTimeout time.Time
 	var timeoutMs int
 
@@ -377,7 +396,7 @@ func (c *Consumer) ReadMessage(timeout time.Duration) (*Message, error) {
 	}
 
 	for {
-		ev := c.Poll(timeoutMs)
+		ev := pollFn(timeoutMs)
 
 		switch e := ev.(type) {
 		case *Message:
@@ -443,10 +462,10 @@ func (c *Consumer) Close() (err error) {
 //                                        If set to true the app must handle the AssignedPartitions and
 //                                        RevokedPartitions events and call Assign() and Unassign()
 //                                        respectively.
-//   go.enable.read.from.partition (bool, false) - Enables to read messages from one partition.
-//											If set to true, disables Queue forwarding on calling Assign(). Then use PollPartition() to get kafka messages
+//   go.enable.read.from.partition (bool, false) - Enables to read messages by each partition.
+//											If set to true, and Assign() is called, ReadFromPartition() must be used to receive kafka messages.
+//											Poll will only receive other kafka events.
 //											Call Unassign() to cleanup the partition queues.
-//											Call Poll() to receive other kafka events
 //   go.events.channel.enable (bool, false) - Enable the Events() channel. Messages and events will be pushed on the Events() channel and the Poll() interface will be disabled. (Experimental)
 //   go.events.channel.size (int, 1000) - Events() channel size
 //   go.logs.channel.enable (bool, false) - Forward log to Logs() channel.
