@@ -872,17 +872,20 @@ func consumerTestWithCommits(t *testing.T, testname string, msgcnt int, useChann
 	consumeFunc func(c *Consumer, mt *msgtracker, expCnt int), rebalanceCb func(c *Consumer, event Event) error) {
 
 	consumerTest(t, testname+" auto commit",
-		msgcnt, consumerCtrl{useChannel: useChannel, autoCommit: true, readFromPartitionQueue: readFromPartitionQueue},
-		consumeFunc, rebalanceCb)
+		msgcnt, consumerCtrl{useChannel: useChannel, autoCommit: true,
+			readFromPartitionQueue: readFromPartitionQueue}, consumeFunc, rebalanceCb)
 
 	consumerTest(t, testname+" using CommitMessage() API",
-		msgcnt, consumerCtrl{useChannel: useChannel, commitMode: ViaCommitMessageAPI}, consumeFunc, rebalanceCb)
+		msgcnt, consumerCtrl{useChannel: useChannel, commitMode: ViaCommitMessageAPI,
+			readFromPartitionQueue: readFromPartitionQueue}, consumeFunc, rebalanceCb)
 
 	consumerTest(t, testname+" using CommitOffsets() API",
-		msgcnt, consumerCtrl{useChannel: useChannel, commitMode: ViaCommitOffsetsAPI}, consumeFunc, rebalanceCb)
+		msgcnt, consumerCtrl{useChannel: useChannel, commitMode: ViaCommitOffsetsAPI,
+			readFromPartitionQueue: readFromPartitionQueue}, consumeFunc, rebalanceCb)
 
 	consumerTest(t, testname+" using Commit() API",
-		msgcnt, consumerCtrl{useChannel: useChannel, commitMode: ViaCommitAPI}, consumeFunc, rebalanceCb)
+		msgcnt, consumerCtrl{useChannel: useChannel, commitMode: ViaCommitAPI,
+			readFromPartitionQueue: readFromPartitionQueue}, consumeFunc, rebalanceCb)
 
 }
 
