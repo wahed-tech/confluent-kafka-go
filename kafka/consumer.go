@@ -114,9 +114,9 @@ func (c *Consumer) Assign(partitions []TopicPartition) (err error) {
 		return newError(e)
 	}
 
-	if c.readFromPartition {
-		c.enableReadFromPartition(partitions)
-	}
+	//if c.readFromPartition {
+	//	c.enableReadFromPartition(partitions)
+	//}
 
 	return nil
 }
@@ -130,9 +130,9 @@ func (c *Consumer) Unassign() (err error) {
 		return newError(e)
 	}
 
-	if c.readFromPartition {
-		c.closePartitionQueues()
-	}
+	//if c.readFromPartition {
+	//	c.closePartitionQueues()
+	//}
 
 	return nil
 }
@@ -377,6 +377,7 @@ func (c *Consumer) ReadFromPartition(toppar TopicPartition, timeout time.Duratio
 	}
 
 	partitionQueue := c.getPartitionQueue(toppar)
+	c.disableQueueForwarding(partitionQueue)
 	defer C.rd_kafka_queue_destroy(partitionQueue)
 	pollFn := func(timeoutMs int) Event {
 		ev, _ := c.handle.eventPoll(nil, timeoutMs, 1, nil, partitionQueue)
