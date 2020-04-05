@@ -171,21 +171,9 @@ func eventTestReadFromPartition() func(c *Consumer, mt *msgtracker, expCnt int) 
 	return func(c *Consumer, mt *msgtracker, expCnt int) {
 
 		done := false
-		go func() {
-			for !done {
-				evt := c.Poll(100)
-				switch msg := evt.(type) {
-				case *Message:
-					mt.t.Fatalf("Consumer error, should not receive msg via Poll Interface: %v", msg)
-				case PartitionEOF:
-					break // silence
-				default:
-					mt.t.Fatalf("Consumer error: %v", msg)
-				}
-			}
-		}()
-
-		ch := make(chan struct{}, 10)
+		go pollForNonMessageEvents(&done, c, mt)
+		mt.t.Log(fmt.Sprintf("%d partitions", len(c.openTopParQueues)))
+		ch := make(chan struct{}, len(c.openTopParQueues))
 		for k, _ := range c.openTopParQueues {
 			go func() {
 				for !done {
@@ -195,20 +183,37 @@ func eventTestReadFromPartition() func(c *Consumer, mt *msgtracker, expCnt int) 
 						break
 					}
 					if ev == nil {
-						// timeout
+						mt.t.Log("nil event")
 						continue
 					}
 					if !handleTestEvent(c, mt, expCnt, ev) {
 						break
 					}
 				}
-				if !done {
-					ch <- struct{}{}
-				}
+				ch <- struct{}{}
 			}()
 		}
-		<-ch // wait until first goroutine to finish
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute*1)
+		select {
+		case <-ch: // wait until first goroutine to finish
+			cancel()
+		case <-ctx.Done():
+		}
 		done = true
+	}
+}
+
+func pollForNonMessageEvents(done *bool, c *Consumer, mt *msgtracker) {
+	for !*done {
+		evt := c.Poll(100)
+		switch msg := evt.(type) {
+		case *Message:
+			mt.t.Fatalf("Consumer error, should not receive msg via Poll Interface: %v", msg)
+		case PartitionEOF:
+			break // silence
+		default:
+			mt.t.Fatalf("Consumer error: %v", msg)
+		}
 	}
 }
 
@@ -233,6 +238,7 @@ func handleTestEvent(c *Consumer, mt *msgtracker, expCnt int, ev Event) bool {
 		if mt.msgcnt >= int64(expCnt) {
 			return false
 		}
+		mt.t.Log("counted message")
 	case PartitionEOF:
 		break // silence
 	default:
@@ -883,11 +889,13 @@ func rebalanceFn(t *testing.T) func(c *Consumer, event Event) error {
 			if err := c.Unassign(); err != nil {
 				t.Errorf("Failed to Unassign: %s\n", err)
 			}
+			t.Log("RevokedPartitions")
 		}
 		if ap, ok := event.(AssignedPartitions); ok {
 			if err := c.Assign(ap.Partitions); err != nil {
 				t.Errorf("Failed to Assign: %s\n", err)
 			}
+			t.Log(fmt.Sprintf("AssignedPartitions, %d", len(ap.Partitions)))
 		}
 		return nil
 	}
