@@ -155,16 +155,15 @@ func (c *Consumer) enableReadFromPartition(partitions []TopicPartition) {
 
 		c.disableQueueForwarding(partitionQueue)
 		c.openTopParQueues[tpClone] = partitionQueue
-		C.rd_kafka_queue_destroy(partitionQueue)
 	}
 }
 
 func (c *Consumer) closePartitionQueues() {
-	//for _, v := range c.openTopParQueues {
-	//	var parQueue *C.rd_kafka_queue_t
-	//	parQueue = v
-	//	C.rd_kafka_queue_destroy(parQueue)
-	//}
+	for _, v := range c.openTopParQueues {
+		var parQueue *C.rd_kafka_queue_t
+		parQueue = v
+		C.rd_kafka_queue_destroy(parQueue)
+	}
 
 	c.openTopParQueues = make(map[topicPartitionKey]*C.rd_kafka_queue_t)
 }
@@ -371,17 +370,11 @@ func (c *Consumer) ReadFromPartition(toppar TopicPartition, timeout time.Duratio
 		Partition: toppar.Partition,
 	}
 
-	_, ok := c.openTopParQueues[tpClone]
+	partitionQueue, ok := c.openTopParQueues[tpClone]
 	if !ok {
 		return nil, newErrorFromString(C.RD_KAFKA_RESP_ERR_INVALID_PARTITIONS, "readFromPartitionQueues not enabled or Partition not assigned")
 	}
 
-	partitionQueue := c.getPartitionQueue(toppar)
-	if partitionQueue == nil {
-		return nil, newErrorFromString(C.RD_KAFKA_RESP_ERR_INVALID_PARTITIONS, "C.rd_kafka_queue_get_partition returned nil")
-	}
-	c.disableQueueForwarding(partitionQueue)
-	defer C.rd_kafka_queue_destroy(partitionQueue)
 	pollFn := func(timeoutMs int) Event {
 		ev, _ := c.handle.eventPoll(nil, timeoutMs, 1, nil, partitionQueue)
 		return ev
