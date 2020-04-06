@@ -400,16 +400,16 @@ func consumerTest(t *testing.T, testname string, msgcnt int, cc consumerCtrl, co
 	}
 
 	conf := ConfigMap{
-		"bootstrap.servers":        testconf.Brokers,
-		"go.events.channel.enable": cc.useChannel,
-		"group.id":                 testconf.GroupID,
-		"session.timeout.ms":       6000,
-		"api.version.request":      "true",
-		"enable.auto.commit":       cc.autoCommit,
-		"debug":                    ",",
-		"log_level":                7,
-		"auto.offset.reset":        "earliest",
-		"go.enable.read.from.partition.queues.queues": cc.readFromPartitionQueue,
+		"bootstrap.servers":                    testconf.Brokers,
+		"go.events.channel.enable":             cc.useChannel,
+		"group.id":                             testconf.GroupID,
+		"session.timeout.ms":                   6000,
+		"api.version.request":                  "true",
+		"enable.auto.commit":                   cc.autoCommit,
+		"debug":                                ",",
+		"log_level":                            7,
+		"auto.offset.reset":                    "earliest",
+		"go.enable.read.from.partition.queues": cc.readFromPartitionQueue,
 	}
 
 	conf.updateFromTestconf()
