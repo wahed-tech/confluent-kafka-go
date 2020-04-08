@@ -24,6 +24,7 @@ import (
 	"path"
 	"reflect"
 	"runtime"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -166,7 +167,7 @@ func eventTestPollConsumer(c *Consumer, mt *msgtracker, expCnt int) {
 }
 
 // consume messages through the ReadFromPartition() interface
-func eventTestReadFromPartition() func(c *Consumer, mt *msgtracker, expCnt int) {
+func eventTestReadFromPartition(hasAssigned chan bool) func(c *Consumer, mt *msgtracker, expCnt int) {
 
 	return func(c *Consumer, mt *msgtracker, expCnt int) {
 
@@ -214,11 +215,13 @@ func eventTestReadFromPartition() func(c *Consumer, mt *msgtracker, expCnt int) 
 		}
 
 		go pollForNonMessageEvents(&done, c, mt)
-		mt.t.Log(fmt.Sprintf("%d partitions", len(c.openTopParQueues)))
+		 <- hasAssigned // wait for first partition assignment
+
+		mt.t.Log(fmt.Sprintf("%d partitions, at %v", len(c.openTopParQueues), time.Now()))
 		for toppar, _ := range c.openTopParQueues {
 			go readMessages(toppar)
 		}
-
+		
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
 		select {
 		case <-doneChan: // wait until first goroutine to finish
@@ -244,10 +247,14 @@ func handleTestEvent(c *Consumer, mt *msgtracker, expCnt int, ev Event) bool {
 	case *Message:
 		if e.TopicPartition.Error != nil {
 			mt.t.Errorf("Error: %v", e.TopicPartition)
+			return false
+		}
+		mt.t.Log(fmt.Sprintf("mt.msgcnt at %d, msg: %v", mt.msgcnt, e))
+		if mt.msgcnt >= int64(expCnt) {
+			return false
 		}
 		mt.msgs[mt.msgcnt] = e
-		mt.msgcnt++
-		mt.t.Log(fmt.Sprintf("mt.msgcnt, %d", mt.msgcnt))
+		atomic.AddInt64(&mt.msgcnt, 1)
 		if mt.msgcnt >= int64(expCnt) {
 			return false
 		}
@@ -408,7 +415,6 @@ func consumerTest(t *testing.T, testname string, msgcnt int, cc consumerCtrl, co
 		"session.timeout.ms":                   6000,
 		"api.version.request":                  "true",
 		"enable.auto.commit":                   cc.autoCommit,
-		"debug":                                ",",
 		"log_level":                            7,
 		"auto.offset.reset":                    "earliest",
 		"go.enable.read.from.partition.queues": cc.readFromPartitionQueue,
@@ -901,7 +907,7 @@ func consumerTestWithCommits(t *testing.T, testname string, msgcnt int, useChann
 
 }
 
-func rebalanceFn(t *testing.T) func(c *Consumer, event Event) error {
+func rebalanceFn(t *testing.T, hasAssigned chan bool) func(c *Consumer, event Event) error {
 	return func(c *Consumer, event Event) error {
 		t.Logf("Rebalanced: %s", event)
 		if _, ok := event.(RevokedPartitions); ok {
@@ -915,6 +921,7 @@ func rebalanceFn(t *testing.T) func(c *Consumer, event Event) error {
 				t.Errorf("Failed to Assign: %s\n", err)
 			}
 			t.Log(fmt.Sprintf("AssignedPartitions, %d", len(ap.Partitions)))
+			hasAssigned <- true
 		}
 		return nil
 	}
@@ -983,20 +990,26 @@ func TestConsumerCommitted(t *testing.T) {
 
 // test consumer poll-based API
 func TestConsumerReadFromPartition(t *testing.T) {
-	consumerTestWithCommits(t, "ReadFromPartition Consumer", 0, false, true, eventTestReadFromPartition(), rebalanceFn(t))
+	hasAssigned := make(chan bool, 1)
+	consumerTestWithCommits(t, "ReadFromPartition Consumer", 0, false, true,
+		eventTestReadFromPartition(hasAssigned), rebalanceFn(t, hasAssigned))
 }
 
 // test consumer poll-based API with rebalance callback
 func TestConsumerReadFromPartitionRebalance(t *testing.T) {
-	consumerTestWithCommits(t, "ReadFromPartition Consumer (rebalance callback)", 0, false, true, eventTestReadFromPartition(), rebalanceFn(t))
+	hasAssigned := make(chan bool, 1)
+	consumerTestWithCommits(t, "ReadFromPartition Consumer (rebalance callback)", 0, false, true,
+		eventTestReadFromPartition(hasAssigned), rebalanceFn(t, hasAssigned))
 }
 
 // Test Committed() API
 func TestConsumerReadFromPartitionCommitted(t *testing.T) {
-	consumerTestWithCommits(t, "ReadFromPartition Consumer (rebalance callback, verify Committed())", 0, false, true, eventTestReadFromPartition(),
+	hasAssigned := make(chan bool, 1)
+	consumerTestWithCommits(t, "ReadFromPartition Consumer (rebalance callback, verify Committed())", 0, false, true,
+		eventTestReadFromPartition(hasAssigned),
 		func(c *Consumer, event Event) error {
 			_ = validateCommitsOnRevokedPartitions(t)(c, event)
-			return rebalanceFn(t)(c, event)
+			return rebalanceFn(t, hasAssigned)(c, event)
 		})
 }
 
