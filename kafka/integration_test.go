@@ -215,13 +215,13 @@ func eventTestReadFromPartition(hasAssigned chan bool) func(c *Consumer, mt *msg
 		}
 
 		go pollForNonMessageEvents(&done, c, mt)
-		 <- hasAssigned // wait for first partition assignment
+		<-hasAssigned // wait for first partition assignment
 
 		mt.t.Log(fmt.Sprintf("%d partitions, at %v", len(c.openTopParQueues), time.Now()))
 		for toppar, _ := range c.openTopParQueues {
 			go readMessages(toppar)
 		}
-		
+
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
 		select {
 		case <-doneChan: // wait until first goroutine to finish
@@ -914,14 +914,14 @@ func rebalanceFn(t *testing.T, hasAssigned chan bool) func(c *Consumer, event Ev
 			if err := c.Unassign(); err != nil {
 				t.Errorf("Failed to Unassign: %s\n", err)
 			}
-			t.Log("RevokedPartitions")
+			t.Logf("RevokedPartitions at %v", time.Now())
 		}
 		if ap, ok := event.(AssignedPartitions); ok {
 			if err := c.Assign(ap.Partitions); err != nil {
 				t.Errorf("Failed to Assign: %s\n", err)
 			}
-			t.Log(fmt.Sprintf("AssignedPartitions, %d", len(ap.Partitions)))
 			hasAssigned <- true
+			t.Logf("AssignedPartitions at %v", time.Now())
 		}
 		return nil
 	}
