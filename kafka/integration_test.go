@@ -198,8 +198,8 @@ func eventTestReadFromPartition(hasAssigned chan bool) func(c *Consumer, mt *msg
 			for !done {
 				ev, err := c.ReadFromPartition(TopicPartition{Topic: &k.Topic, Partition: k.Partition}, 100)
 				if err != nil {
-					mt.t.Errorf("Consumer error: %v", err)
-					break
+					mt.t.Logf("Consumer error: %v", err)
+					continue
 				}
 				if ev == nil {
 					mt.t.Log("nil event")
@@ -247,7 +247,7 @@ func handleTestEvent(c *Consumer, mt *msgtracker, expCnt int, ev Event) bool {
 	case *Message:
 		if e.TopicPartition.Error != nil {
 			mt.t.Errorf("Error: %v", e.TopicPartition)
-			return false
+			return true
 		}
 		mt.t.Log(fmt.Sprintf("mt.msgcnt at %d, msg: %v", mt.msgcnt, e))
 		if mt.msgcnt >= int64(expCnt) {
