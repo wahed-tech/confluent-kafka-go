@@ -172,8 +172,8 @@ func eventTestReadFromPartition(hasAssigned chan bool) func(c *Consumer, mt *msg
 	return func(c *Consumer, mt *msgtracker, expCnt int) {
 
 		done := false
-		pollForNonMessageEvents := func(done *bool, c *Consumer, mt *msgtracker) {
-			for !*done {
+		pollForNonMessageEvents := func(c *Consumer, mt *msgtracker) {
+			for !done {
 				evt := c.Poll(100)
 				if evt == nil {
 					// timeout
@@ -183,12 +183,12 @@ func eventTestReadFromPartition(hasAssigned chan bool) func(c *Consumer, mt *msg
 				switch msg := evt.(type) {
 				case *Message:
 					mt.t.Errorf("Consumer error, should not receive msg via Poll Interface: %v", msg)
-					*done = true
+					done = true
 				case PartitionEOF:
 					break // silence
 				default:
 					mt.t.Errorf("Consumer error: %v", msg)
-					*done = true
+					done = true
 				}
 			}
 		}
@@ -210,13 +210,12 @@ func eventTestReadFromPartition(hasAssigned chan bool) func(c *Consumer, mt *msg
 					break
 				}
 			}
-			doneChan <- struct{}{}
 			done = true
+			doneChan <- struct{}{}
 		}
 
-		go pollForNonMessageEvents(&done, c, mt)
+		go pollForNonMessageEvents(c, mt)
 		<-hasAssigned // wait for first partition assignment
-
 		mt.t.Log(fmt.Sprintf("%d partitions, at %v", len(c.openTopParQueues), time.Now()))
 		for toppar, _ := range c.openTopParQueues {
 			go readMessages(toppar)
@@ -249,13 +248,14 @@ func handleTestEvent(c *Consumer, mt *msgtracker, expCnt int, ev Event) bool {
 			mt.t.Errorf("Error: %v", e.TopicPartition)
 			return true
 		}
-		mt.t.Log(fmt.Sprintf("mt.msgcnt at %d, msg: %v", mt.msgcnt, e))
-		if mt.msgcnt >= int64(expCnt) {
+		msgcnt := mt.msgcnt
+		mt.t.Log(fmt.Sprintf("mt.msgcnt at %d, msg: %v", msgcnt, e))
+		if msgcnt >= int64(expCnt) {
 			return false
 		}
-		mt.msgs[mt.msgcnt] = e
-		atomic.AddInt64(&mt.msgcnt, 1)
-		if mt.msgcnt >= int64(expCnt) {
+		mt.msgs[msgcnt] = e
+		msgcnt = atomic.AddInt64(&mt.msgcnt, 1)
+		if msgcnt >= int64(expCnt) {
 			return false
 		}
 	case PartitionEOF:
