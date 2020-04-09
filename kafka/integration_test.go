@@ -168,70 +168,71 @@ func eventTestPollConsumer(c *Consumer, mt *msgtracker, expCnt int) {
 }
 
 // consume messages through the ReadFromPartition() interface
-func eventTestReadFromPartition(hasAssigned <- chan bool) func(c *Consumer, mt *msgtracker, expCnt int) {
+func eventTestReadFromPartition(hasAssigned <-chan bool) func(c *Consumer, mt *msgtracker, expCnt int) {
 
 	return func(c *Consumer, mt *msgtracker, expCnt int) {
 		var wg = sync.WaitGroup{}
-		done := false
-		pollForNonMessageEvents := func(c *Consumer, mt *msgtracker) {
-			for !done {
-				evt := c.Poll(100)
-				if evt == nil {
-					// timeout
-					continue
-				}
-				mt.t.Logf("from global queue %v", evt)
-				switch msg := evt.(type) {
-				case *Message:
-					mt.t.Errorf("Consumer error, should not receive msg via Poll Interface: %v", msg)
-					done = true
-				case PartitionEOF:
-					break // silence
+		pollForNonMessageEvents := func(ctx context.Context, cancel func(), c *Consumer, mt *msgtracker) {
+			defer wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
 				default:
-					mt.t.Errorf("Consumer error: %v", msg)
+					evt := c.Poll(100)
+					if evt == nil {
+						// timeout
+						continue
+					}
+					mt.t.Logf("from global queue %v", evt)
+					switch msg := evt.(type) {
+					case *Message:
+						mt.t.Errorf("Consumer error, should not receive msg via Poll Interface: %v", msg)
+						cancel()
+					case PartitionEOF:
+						break // silence
+					default:
+						mt.t.Errorf("Consumer error: %v", msg)
+					}
 				}
 			}
-			wg.Done()
 		}
 
-		readMessages := func(k topicPartitionKey, doneChan chan struct{}) {
-			for !done {
-				ev, err := c.ReadFromPartition(TopicPartition{Topic: &k.Topic, Partition: k.Partition}, 100)
-				if err != nil {
-					mt.t.Logf("Consumer error: %v", err)
-					continue
-				}
-				if ev == nil {
-					mt.t.Log("nil event")
-					continue
-				}
-				mt.t.Logf("from partition queue %v", ev)
-				if !handleTestEvent(c, mt, expCnt, ev) {
-					break
+		readMessages := func(ctx context.Context, cancel func(), k topicPartitionKey) {
+			defer wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					ev, err := c.ReadFromPartition(TopicPartition{Topic: &k.Topic, Partition: k.Partition}, 100)
+					if err != nil {
+						mt.t.Logf("Consumer error: %v", err)
+						continue
+					}
+					if ev == nil {
+						mt.t.Log("nil event")
+						continue
+					}
+					mt.t.Logf("from partition queue %v", ev)
+					if !handleTestEvent(c, mt, expCnt, ev) {
+						cancel()
+					}
 				}
 			}
-			done = true
-			doneChan <- struct{}{}
-			wg.Done()
-		}
-		wg.Add(1)
-		go pollForNonMessageEvents(c, mt)
-		<-hasAssigned // wait for first partition assignment
-		mt.t.Log(fmt.Sprintf("%d partitions, at %v", len(c.openTopParQueues), time.Now()))
-		wg.Add(len(c.openTopParQueues))
-		doneChan := make(chan struct{}, len(c.openTopParQueues))
-		for toppar, _ := range c.openTopParQueues {
-			go readMessages(toppar, doneChan)
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
-		select {
-		case <-doneChan: // wait until first goroutine to finish
-			cancel()
-			wg.Wait()
-		case <-ctx.Done():
-			done = true
+		wg.Add(1)
+		go pollForNonMessageEvents(ctx, cancel, c, mt)
+		<-hasAssigned // wait for first partition assignment
+		mt.t.Log(fmt.Sprintf("%d partitions, at %v", len(c.openTopParQueues), time.Now()))
+		for toppar, _ := range c.openTopParQueues {
+			wg.Add(1)
+			go readMessages(ctx, cancel, toppar)
 		}
+
+		wg.Wait()
 	}
 }
 
