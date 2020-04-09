@@ -207,6 +207,10 @@ func eventTestReadFromPartition(hasAssigned <-chan bool) func(c *Consumer, mt *m
 						return
 					default:
 						tick := <-ticker
+						if mt.msgcnt >= int64(expCnt) {
+							cancel()
+							break
+						}
 						mt.msgs[mt.msgcnt] = tick
 						mt.msgcnt++
 						if mt.msgcnt >= int64(expCnt) {
