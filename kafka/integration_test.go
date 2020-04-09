@@ -167,7 +167,7 @@ func eventTestPollConsumer(c *Consumer, mt *msgtracker, expCnt int) {
 }
 
 // consume messages through the ReadFromPartition() interface
-func eventTestReadFromPartition(hasAssigned chan bool) func(c *Consumer, mt *msgtracker, expCnt int) {
+func eventTestReadFromPartition(hasAssigned <- chan bool) func(c *Consumer, mt *msgtracker, expCnt int) {
 
 	return func(c *Consumer, mt *msgtracker, expCnt int) {
 
@@ -188,7 +188,6 @@ func eventTestReadFromPartition(hasAssigned chan bool) func(c *Consumer, mt *msg
 					break // silence
 				default:
 					mt.t.Errorf("Consumer error: %v", msg)
-					done = true
 				}
 			}
 		}

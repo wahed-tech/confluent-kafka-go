@@ -19,6 +19,7 @@ package kafka
 import (
 	"fmt"
 	"math/rand"
+	"sync"
 	"testing"
 	"time"
 )
@@ -100,6 +101,23 @@ func handleEvent(c *Consumer, rd *ratedisp, expCnt int, ev Event) bool {
 
 }
 
+// handleEvent returns false if processing should stop, else true
+func handleConcurrentEvent(ticker chan int64, rd *ratedisp, ev Event) {
+	switch e := ev.(type) {
+	case *Message:
+		if e.TopicPartition.Error != nil {
+			rd.b.Logf("Error: %v", e.TopicPartition)
+			return
+		}
+		ticker <- int64(len(e.Value))
+	case PartitionEOF:
+		break // silence
+	default:
+		rd.b.Fatalf("Consumer error: %v", e)
+	}
+
+}
+
 // consume messages through the Events channel
 func eventChannelConsumer(c *Consumer, rd *ratedisp, expCnt int) {
 	for ev := range c.Events() {
@@ -120,6 +138,46 @@ func eventPollConsumer(c *Consumer, rd *ratedisp, expCnt int) {
 		if !handleEvent(c, rd, expCnt, ev) {
 			break
 		}
+	}
+}
+
+// consume messages through the ReadFromPartition() interface
+func eventReadFromPartition(hasAssigned <- chan bool) func(c *Consumer, rd *ratedisp, expCnt int) {
+	return func(c *Consumer, rd *ratedisp, expCnt int) {
+		<-hasAssigned
+		ticker := make(chan int64, 100)
+		var wg = sync.WaitGroup{}
+		wg.Add(1)
+		go func() {
+			tick := <-ticker
+			// start measuring time from first message to avoid
+			// including rebalancing time.
+			rd.b.ResetTimer()
+			rd.reset()
+			rd.tick(1, tick)
+
+			for rd.cnt < int64(expCnt) {
+				tick := <-ticker
+				rd.tick(1, tick)
+			}
+			wg.Done()
+		}()
+
+		wg.Add(len(c.openTopParQueues))
+		for key, _ := range c.openTopParQueues {
+			go func() {
+				for rd.cnt < int64(expCnt) {
+					ev, _ := c.ReadFromPartition(TopicPartition{Topic: &key.Topic, Partition: key.Partition}, 100)
+					if ev == nil || ev.TopicPartition.Error != nil {
+						// timeout
+						continue
+					}
+					handleConcurrentEvent(ticker, rd, ev)
+				}
+				wg.Done()
+			}()
+		}
+		wg.Wait()
 	}
 }
 
@@ -172,6 +230,29 @@ func BenchmarkConsumerPollRebalancePerformance(b *testing.B) {
 		0, false, eventPollConsumer,
 		func(c *Consumer, event Event) error {
 			b.Logf("Rebalanced: %s", event)
+			return nil
+		})
+}
+
+func BenchmarkConsumerReadFromPartitionPerformance(b *testing.B) {
+	hasAssigned := make(chan bool, 1)
+	consumerPerfTest(b, "Poll Consumer (rebalance callback)",
+		0, false, eventReadFromPartition(hasAssigned),
+		func(c *Consumer, event Event) error {
+			b.Logf("Rebalanced: %s", event)
+			if _, ok := event.(RevokedPartitions); ok {
+				if err := c.Unassign(); err != nil {
+					b.Errorf("Failed to Unassign: %s\n", err)
+				}
+				b.Logf("RevokedPartitions at %v", time.Now())
+			}
+			if ap, ok := event.(AssignedPartitions); ok {
+				if err := c.Assign(ap.Partitions); err != nil {
+					b.Errorf("Failed to Assign: %s\n", err)
+				}
+				hasAssigned <- true
+				b.Logf("AssignedPartitions at %v", time.Now())
+			}
 			return nil
 		})
 }
