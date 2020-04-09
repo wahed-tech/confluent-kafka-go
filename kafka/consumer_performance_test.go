@@ -155,7 +155,7 @@ func eventReadFromPartition(hasAssigned <-chan bool) func(c *Consumer, rd *rated
 						// timeout
 						continue
 					}
-					switch msg := evt.(type) {
+					switch evt.(type) {
 					case *Message:
 						cancel()
 					case PartitionEOF:
@@ -167,22 +167,24 @@ func eventReadFromPartition(hasAssigned <-chan bool) func(c *Consumer, rd *rated
 			}
 		}
 
-		readMessages := func(key topicPartitionKey, events chan int64) {
+		readMessages := func(ctx context.Context, cancel func(), key topicPartitionKey, events chan int64) {
 			defer wg.Done()
 			for {
-				if rd.cnt >= int64(expCnt) {
-					break
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					ev, _ := c.ReadFromPartition(TopicPartition{Topic: &key.Topic, Partition: key.Partition}, 100)
+					if ev == nil || ev.TopicPartition.Error != nil {
+						// timeout
+						continue
+					}
+					handleConcurrentEvent(events, rd, ev)
 				}
-				ev, _ := c.ReadFromPartition(TopicPartition{Topic: &key.Topic, Partition: key.Partition}, 100)
-				if ev == nil || ev.TopicPartition.Error != nil {
-					// timeout
-					continue
-				}
-				handleConcurrentEvent(events, rd, ev)
 			}
 		}
 
-		tickr := func(events chan int64) {
+		tickr := func(ctx context.Context, cancel func(), events chan int64) {
 			defer wg.Done()
 			tick := <-events
 			// start measuring time from first message to avoid
@@ -192,11 +194,17 @@ func eventReadFromPartition(hasAssigned <-chan bool) func(c *Consumer, rd *rated
 			rd.tick(1, tick)
 
 			for {
-				if rd.cnt >= int64(expCnt) {
-					break
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					if rd.cnt >= int64(expCnt) {
+						cancel()
+						break
+					}
+					tick := <-events
+					rd.tick(1, tick)
 				}
-				tick := <-events
-				rd.tick(1, tick)
 			}
 		}
 
@@ -208,11 +216,11 @@ func eventReadFromPartition(hasAssigned <-chan bool) func(c *Consumer, rd *rated
 		go pollForEvents(ctx, cancel, c)
 
 		wg.Add(1)
-		go tickr(events)
+		go tickr(ctx, cancel, events)
 
 		for key, _ := range c.openTopParQueues {
 			wg.Add(1)
-			go readMessages(key, events)
+			go readMessages(ctx, cancel, key, events)
 		}
 		wg.Wait()
 	}
