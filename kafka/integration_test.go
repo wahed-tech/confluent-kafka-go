@@ -194,8 +194,7 @@ func eventTestReadFromPartition(hasAssigned <- chan bool) func(c *Consumer, mt *
 			wg.Done()
 		}
 
-		doneChan := make(chan struct{}, len(c.openTopParQueues))
-		readMessages := func(k topicPartitionKey) {
+		readMessages := func(k topicPartitionKey, doneChan chan struct{}) {
 			for !done {
 				ev, err := c.ReadFromPartition(TopicPartition{Topic: &k.Topic, Partition: k.Partition}, 100)
 				if err != nil {
@@ -220,18 +219,19 @@ func eventTestReadFromPartition(hasAssigned <- chan bool) func(c *Consumer, mt *
 		<-hasAssigned // wait for first partition assignment
 		mt.t.Log(fmt.Sprintf("%d partitions, at %v", len(c.openTopParQueues), time.Now()))
 		wg.Add(len(c.openTopParQueues))
+		doneChan := make(chan struct{}, len(c.openTopParQueues))
 		for toppar, _ := range c.openTopParQueues {
-			go readMessages(toppar)
+			go readMessages(toppar, doneChan)
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
 		select {
 		case <-doneChan: // wait until first goroutine to finish
 			cancel()
+			wg.Wait()
 		case <-ctx.Done():
 			done = true
 		}
-		wg.Wait()
 	}
 }
 
