@@ -25,7 +25,6 @@ import (
 	"reflect"
 	"runtime"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -200,6 +199,23 @@ func eventTestReadFromPartition(hasAssigned <-chan bool) func(c *Consumer, mt *m
 
 		readMessages := func(ctx context.Context, cancel func(), k topicPartitionKey) {
 			defer wg.Done()
+			ticker := make(chan*Message, expCnt)
+			go func() {
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					default:
+						tick := <-ticker
+						mt.msgs[mt.msgcnt] = tick
+						mt.msgcnt++
+						if mt.msgcnt >= int64(expCnt) {
+							cancel()
+							break
+						}
+					}
+				}
+			}()
 			for {
 				select {
 				case <-ctx.Done():
@@ -215,9 +231,7 @@ func eventTestReadFromPartition(hasAssigned <-chan bool) func(c *Consumer, mt *m
 						continue
 					}
 					mt.t.Logf("from partition queue %v", ev)
-					if !handleTestEvent(c, mt, expCnt, ev) {
-						cancel()
-					}
+					handleConcurrentTestEvent(ticker, mt, ev)
 				}
 			}
 		}
@@ -225,6 +239,7 @@ func eventTestReadFromPartition(hasAssigned <-chan bool) func(c *Consumer, mt *m
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
 		wg.Add(1)
 		go pollForNonMessageEvents(ctx, cancel, c, mt)
+
 		<-hasAssigned // wait for first partition assignment
 		mt.t.Log(fmt.Sprintf("%d partitions, at %v", len(c.openTopParQueues), time.Now()))
 		for toppar, _ := range c.openTopParQueues {
@@ -251,16 +266,10 @@ func handleTestEvent(c *Consumer, mt *msgtracker, expCnt int, ev Event) bool {
 	case *Message:
 		if e.TopicPartition.Error != nil {
 			mt.t.Errorf("Error: %v", e.TopicPartition)
-			return true
 		}
-		msgcnt := mt.msgcnt
-		mt.t.Log(fmt.Sprintf("mt.msgcnt at %d, msg: %v", msgcnt, e))
-		if msgcnt >= int64(expCnt) {
-			return false
-		}
-		mt.msgs[msgcnt] = e
-		msgcnt = atomic.AddInt64(&mt.msgcnt, 1)
-		if msgcnt >= int64(expCnt) {
+		mt.msgs[mt.msgcnt] = e
+		mt.msgcnt++
+		if mt.msgcnt >= int64(expCnt) {
 			return false
 		}
 	case PartitionEOF:
@@ -269,6 +278,23 @@ func handleTestEvent(c *Consumer, mt *msgtracker, expCnt int, ev Event) bool {
 		mt.t.Fatalf("Consumer error: %v", e)
 	}
 	return true
+}
+
+
+// handleEvent returns false if processing should stop, else true
+func handleConcurrentTestEvent(ticker chan <- *Message, mt *msgtracker, ev Event) {
+	switch e := ev.(type) {
+	case *Message:
+		if e.TopicPartition.Error != nil {
+			mt.t.Logf("Error: %v", e.TopicPartition)
+			return
+		}
+		ticker <- e
+	case PartitionEOF:
+		break // silence
+	default:
+		mt.t.Fatalf("Consumer error: %v", e)
+	}
 
 }
 
