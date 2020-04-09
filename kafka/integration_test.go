@@ -285,7 +285,6 @@ func handleTestEvent(c *Consumer, mt *msgtracker, expCnt int, ev Event) bool {
 }
 
 
-// handleEvent returns false if processing should stop, else true
 func handleConcurrentTestEvent(ticker chan <- *Message, mt *msgtracker, ev Event) {
 	switch e := ev.(type) {
 	case *Message:

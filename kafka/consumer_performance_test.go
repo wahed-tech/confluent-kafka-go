@@ -17,6 +17,7 @@
 package kafka
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"sync"
@@ -101,13 +102,11 @@ func handleEvent(c *Consumer, rd *ratedisp, expCnt int, ev Event) bool {
 
 }
 
-// handleEvent returns false if processing should stop, else true
 func handleConcurrentEvent(ticker chan int64, rd *ratedisp, ev Event) {
 	switch e := ev.(type) {
 	case *Message:
 		if e.TopicPartition.Error != nil {
 			rd.b.Logf("Error: %v", e.TopicPartition)
-			return
 		}
 		ticker <- int64(len(e.Value))
 	case PartitionEOF:
@@ -115,7 +114,6 @@ func handleConcurrentEvent(ticker chan int64, rd *ratedisp, ev Event) {
 	default:
 		rd.b.Fatalf("Consumer error: %v", e)
 	}
-
 }
 
 // consume messages through the Events channel
@@ -142,40 +140,79 @@ func eventPollConsumer(c *Consumer, rd *ratedisp, expCnt int) {
 }
 
 // consume messages through the ReadFromPartition() interface
-func eventReadFromPartition(hasAssigned <- chan bool) func(c *Consumer, rd *ratedisp, expCnt int) {
+func eventReadFromPartition(hasAssigned <-chan bool) func(c *Consumer, rd *ratedisp, expCnt int) {
 	return func(c *Consumer, rd *ratedisp, expCnt int) {
-		<-hasAssigned
-		ticker := make(chan int64, 100)
 		var wg = sync.WaitGroup{}
-		wg.Add(1)
-		go func() {
-			tick := <-ticker
+		pollForEvents := func(ctx context.Context, cancel func(), c *Consumer) {
+			defer wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					evt := c.Poll(100)
+					if evt == nil {
+						// timeout
+						continue
+					}
+					switch msg := evt.(type) {
+					case *Message:
+						cancel()
+					case PartitionEOF:
+						break // silence
+					default:
+						continue
+					}
+				}
+			}
+		}
+
+		readMessages := func(key topicPartitionKey, events chan int64) {
+			defer wg.Done()
+			for {
+				if rd.cnt >= int64(expCnt) {
+					break
+				}
+				ev, _ := c.ReadFromPartition(TopicPartition{Topic: &key.Topic, Partition: key.Partition}, 100)
+				if ev == nil || ev.TopicPartition.Error != nil {
+					// timeout
+					continue
+				}
+				handleConcurrentEvent(events, rd, ev)
+			}
+		}
+
+		tickr := func(events chan int64) {
+			defer wg.Done()
+			tick := <-events
 			// start measuring time from first message to avoid
 			// including rebalancing time.
 			rd.b.ResetTimer()
 			rd.reset()
 			rd.tick(1, tick)
 
-			for rd.cnt < int64(expCnt) {
-				tick := <-ticker
+			for {
+				if rd.cnt >= int64(expCnt) {
+					break
+				}
+				tick := <-events
 				rd.tick(1, tick)
 			}
-			wg.Done()
-		}()
+		}
 
-		wg.Add(len(c.openTopParQueues))
+		<-hasAssigned
+		events := make(chan int64, 100)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
+
+		wg.Add(1)
+		go pollForEvents(ctx, cancel, c)
+
+		wg.Add(1)
+		go tickr(events)
+
 		for key, _ := range c.openTopParQueues {
-			go func() {
-				for rd.cnt < int64(expCnt) {
-					ev, _ := c.ReadFromPartition(TopicPartition{Topic: &key.Topic, Partition: key.Partition}, 100)
-					if ev == nil || ev.TopicPartition.Error != nil {
-						// timeout
-						continue
-					}
-					handleConcurrentEvent(ticker, rd, ev)
-				}
-				wg.Done()
-			}()
+			wg.Add(1)
+			go readMessages(key, events)
 		}
 		wg.Wait()
 	}
