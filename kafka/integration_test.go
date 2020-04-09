@@ -24,6 +24,7 @@ import (
 	"path"
 	"reflect"
 	"runtime"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -170,7 +171,7 @@ func eventTestPollConsumer(c *Consumer, mt *msgtracker, expCnt int) {
 func eventTestReadFromPartition(hasAssigned <- chan bool) func(c *Consumer, mt *msgtracker, expCnt int) {
 
 	return func(c *Consumer, mt *msgtracker, expCnt int) {
-
+		var wg = sync.WaitGroup{}
 		done := false
 		pollForNonMessageEvents := func(c *Consumer, mt *msgtracker) {
 			for !done {
@@ -190,6 +191,7 @@ func eventTestReadFromPartition(hasAssigned <- chan bool) func(c *Consumer, mt *
 					mt.t.Errorf("Consumer error: %v", msg)
 				}
 			}
+			wg.Done()
 		}
 
 		doneChan := make(chan struct{}, len(c.openTopParQueues))
@@ -211,11 +213,13 @@ func eventTestReadFromPartition(hasAssigned <- chan bool) func(c *Consumer, mt *
 			}
 			done = true
 			doneChan <- struct{}{}
+			wg.Done()
 		}
-
+		wg.Add(1)
 		go pollForNonMessageEvents(c, mt)
 		<-hasAssigned // wait for first partition assignment
 		mt.t.Log(fmt.Sprintf("%d partitions, at %v", len(c.openTopParQueues), time.Now()))
+		wg.Add(len(c.openTopParQueues))
 		for toppar, _ := range c.openTopParQueues {
 			go readMessages(toppar)
 		}
@@ -227,6 +231,7 @@ func eventTestReadFromPartition(hasAssigned <- chan bool) func(c *Consumer, mt *
 		case <-ctx.Done():
 			done = true
 		}
+		wg.Wait()
 	}
 }
 
