@@ -186,7 +186,7 @@ func eventReadFromPartition(hasAssigned <-chan bool) func(c *Consumer, rd *rated
 			}
 		}
 
-		tickr := func(wg *sync.WaitGroup, events chan int64) {
+		tickr := func(ctx context.Context, wg *sync.WaitGroup, events chan int64) {
 			defer wg.Done()
 			tick := <-events
 			// start measuring time from first message to avoid
@@ -201,6 +201,7 @@ func eventReadFromPartition(hasAssigned <-chan bool) func(c *Consumer, rd *rated
 				}
 				rd.tick(1, tick)
 			}
+			ctx.Done()
 		}
 
 		events := make(chan int64, 10)
@@ -212,7 +213,7 @@ func eventReadFromPartition(hasAssigned <-chan bool) func(c *Consumer, rd *rated
 
 		var tickerWg = &sync.WaitGroup{}
 		tickerWg.Add(1)
-		go tickr(tickerWg, events)
+		go tickr(ctx, tickerWg, events)
 
 		<-hasAssigned
 		for key, _ := range c.openTopParQueues {
