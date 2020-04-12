@@ -171,7 +171,7 @@ func eventTestReadFromPartition(hasAssigned <-chan bool) func(c *Consumer, mt *m
 
 	return func(c *Consumer, mt *msgtracker, expCnt int) {
 		var wg = sync.WaitGroup{}
-		pollForNonMessageEvents := func(ctx context.Context, cancel func(), c *Consumer, mt *msgtracker) {
+		pollForEvents := func(ctx context.Context, cancel func(), c *Consumer, mt *msgtracker) {
 			defer wg.Done()
 			for {
 				select {
@@ -242,7 +242,7 @@ func eventTestReadFromPartition(hasAssigned <-chan bool) func(c *Consumer, mt *m
 
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
 		wg.Add(1)
-		go pollForNonMessageEvents(ctx, cancel, c, mt)
+		go pollForEvents(ctx, cancel, c, mt)
 
 		<-hasAssigned // wait for first partition assignment
 		mt.t.Log(fmt.Sprintf("%d partitions, at %v", len(c.openTopParQueues), time.Now()))

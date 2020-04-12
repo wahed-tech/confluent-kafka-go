@@ -208,9 +208,8 @@ func eventReadFromPartition(hasAssigned <-chan bool) func(c *Consumer, rd *rated
 			}
 		}
 
-		<-hasAssigned
 		events := make(chan int64, 100)
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second*300)
 
 		wg.Add(1)
 		go pollForEvents(ctx, cancel, c)
@@ -218,6 +217,7 @@ func eventReadFromPartition(hasAssigned <-chan bool) func(c *Consumer, rd *rated
 		wg.Add(1)
 		go tickr(ctx, cancel, events)
 
+		<-hasAssigned
 		for key, _ := range c.openTopParQueues {
 			wg.Add(1)
 			go readMessages(ctx, cancel, key, events)
@@ -281,7 +281,7 @@ func BenchmarkConsumerPollRebalancePerformance(b *testing.B) {
 
 func BenchmarkConsumerReadFromPartitionPerformance(b *testing.B) {
 	hasAssigned := make(chan bool, 1)
-	consumerPerfTest(b, "Poll Consumer (rebalance callback)",
+	consumerPerfTest(b, "Poll Consumer (ReadFromPartition)",
 		0, false, eventReadFromPartition(hasAssigned),
 		func(c *Consumer, event Event) error {
 			b.Logf("Rebalanced: %s", event)
