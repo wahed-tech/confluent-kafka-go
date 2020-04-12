@@ -26,7 +26,8 @@ import (
 )
 
 // consumerPerfTest measures the consumer performance using a pre-primed (produced to) topic
-func consumerPerfTest(b *testing.B, testname string, msgcnt int, useChannel bool, consumeFunc func(c *Consumer, rd *ratedisp, expCnt int), rebalanceCb func(c *Consumer, event Event) error) {
+func consumerPerfTest(b *testing.B, testname string, msgcnt int, useChannel bool, readFromPartitionQueue bool,
+	consumeFunc func(c *Consumer, rd *ratedisp, expCnt int), rebalanceCb func(c *Consumer, event Event) error) {
 
 	r := testconsumerInit(b)
 	if r == -1 {
@@ -40,13 +41,14 @@ func consumerPerfTest(b *testing.B, testname string, msgcnt int, useChannel bool
 	rand.Seed(int64(time.Now().Unix()))
 
 	conf := ConfigMap{"bootstrap.servers": testconf.Brokers,
-		"go.events.channel.enable": useChannel,
-		"group.id":                 fmt.Sprintf("go_cperf_%d", rand.Intn(1000000)),
-		"session.timeout.ms":       6000,
-		"api.version.request":      "true",
-		"enable.auto.commit":       false,
-		"debug":                    ",",
-		"auto.offset.reset":        "earliest"}
+		"go.events.channel.enable":             useChannel,
+		"go.enable.read.from.partition.queues": readFromPartitionQueue,
+		"group.id":                             fmt.Sprintf("go_cperf_%d", rand.Intn(1000000)),
+		"session.timeout.ms":                   6000,
+		"api.version.request":                  "true",
+		"enable.auto.commit":                   false,
+		"debug":                                ",",
+		"auto.offset.reset":                    "earliest"}
 
 	conf.updateFromTestconf()
 
@@ -262,17 +264,17 @@ func testconsumerInit(b *testing.B) int {
 
 func BenchmarkConsumerChannelPerformance(b *testing.B) {
 	consumerPerfTest(b, "Channel Consumer",
-		0, true, eventChannelConsumer, nil)
+		0, true, false, eventChannelConsumer, nil)
 }
 
 func BenchmarkConsumerPollPerformance(b *testing.B) {
 	consumerPerfTest(b, "Poll Consumer",
-		0, false, eventPollConsumer, nil)
+		0, false, false, eventPollConsumer, nil)
 }
 
 func BenchmarkConsumerPollRebalancePerformance(b *testing.B) {
 	consumerPerfTest(b, "Poll Consumer (rebalance callback)",
-		0, false, eventPollConsumer,
+		0, false, false, eventPollConsumer,
 		func(c *Consumer, event Event) error {
 			b.Logf("Rebalanced: %s", event)
 			return nil
@@ -282,7 +284,7 @@ func BenchmarkConsumerPollRebalancePerformance(b *testing.B) {
 func BenchmarkConsumerReadFromPartitionPerformance(b *testing.B) {
 	hasAssigned := make(chan bool, 1)
 	consumerPerfTest(b, "Poll Consumer (ReadFromPartition)",
-		0, false, eventReadFromPartition(hasAssigned),
+		0, false, true, eventReadFromPartition(hasAssigned),
 		func(c *Consumer, event Event) error {
 			b.Logf("Rebalanced: %s", event)
 			if _, ok := event.(RevokedPartitions); ok {
