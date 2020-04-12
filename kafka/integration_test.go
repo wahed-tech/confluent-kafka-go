@@ -225,7 +225,7 @@ func eventTestReadFromPartition(hasAssigned <-chan bool) func(c *Consumer, mt *m
 				case <-ctx.Done():
 					return
 				default:
-					ev, err := c.ReadFromPartition(TopicPartition{Topic: &k.Topic, Partition: k.Partition}, 100)
+					ev, err := c.ReadFromPartition(TopicPartition{Topic: &k.Topic, Partition: k.Partition}, 100*time.Millisecond)
 					if err != nil {
 						mt.t.Logf("Consumer error: %v", err)
 						continue

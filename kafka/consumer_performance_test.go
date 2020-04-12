@@ -104,13 +104,17 @@ func handleEvent(c *Consumer, rd *ratedisp, expCnt int, ev Event) bool {
 
 }
 
-func handleConcurrentEvent(ticker chan int64, rd *ratedisp, ev Event) {
+func handleConcurrentEvent(ctx context.Context, ticker chan int64, rd *ratedisp, ev Event) {
 	switch e := ev.(type) {
 	case *Message:
 		if e.TopicPartition.Error != nil {
 			rd.b.Logf("Error: %v", e.TopicPartition)
 		}
-		ticker <- int64(len(e.Value))
+		select {
+		case <-ctx.Done():
+		default:
+			ticker <- int64(len(e.Value))
+		}
 	case PartitionEOF:
 		break // silence
 	default:
@@ -176,17 +180,17 @@ func eventReadFromPartition(hasAssigned <-chan bool) func(c *Consumer, rd *rated
 				case <-ctx.Done():
 					return
 				default:
-					ev, _ := c.ReadFromPartition(TopicPartition{Topic: &key.Topic, Partition: key.Partition}, 100)
+					ev, _ := c.ReadFromPartition(TopicPartition{Topic: &key.Topic, Partition: key.Partition}, 100*time.Millisecond)
 					if ev == nil || ev.TopicPartition.Error != nil {
 						// timeout
 						continue
 					}
-					handleConcurrentEvent(events, rd, ev)
+					handleConcurrentEvent(ctx, events, rd, ev)
 				}
 			}
 		}
 
-		tickr := func(ctx context.Context, wg *sync.WaitGroup, events chan int64) {
+		tickr := func(ctx context.Context, cancel func(), wg *sync.WaitGroup, events chan int64) {
 			defer wg.Done()
 			tick := <-events
 			// start measuring time from first message to avoid
@@ -201,10 +205,10 @@ func eventReadFromPartition(hasAssigned <-chan bool) func(c *Consumer, rd *rated
 				}
 				rd.tick(1, tick)
 			}
-			ctx.Done()
+			cancel()
 		}
 
-		events := make(chan int64, 10)
+		events := make(chan int64, 1)
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second*300)
 		var wg = &sync.WaitGroup{}
 
@@ -213,7 +217,7 @@ func eventReadFromPartition(hasAssigned <-chan bool) func(c *Consumer, rd *rated
 
 		var tickerWg = &sync.WaitGroup{}
 		tickerWg.Add(1)
-		go tickr(ctx, tickerWg, events)
+		go tickr(ctx, cancel, tickerWg, events)
 
 		<-hasAssigned
 		for key, _ := range c.openTopParQueues {
