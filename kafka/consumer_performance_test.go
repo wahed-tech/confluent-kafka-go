@@ -144,8 +144,8 @@ func eventPollConsumer(c *Consumer, rd *ratedisp, expCnt int) {
 // consume messages through the ReadFromPartition() interface
 func eventReadFromPartition(hasAssigned <-chan bool) func(c *Consumer, rd *ratedisp, expCnt int) {
 	return func(c *Consumer, rd *ratedisp, expCnt int) {
-		var wg = sync.WaitGroup{}
-		pollForEvents := func(ctx context.Context, cancel func(), c *Consumer) {
+
+		pollForEvents := func(ctx context.Context, wg *sync.WaitGroup, cancel func(), c *Consumer) {
 			defer wg.Done()
 			for {
 				select {
@@ -169,7 +169,7 @@ func eventReadFromPartition(hasAssigned <-chan bool) func(c *Consumer, rd *rated
 			}
 		}
 
-		readMessages := func(ctx context.Context, cancel func(), key topicPartitionKey, events chan int64) {
+		readMessages := func(ctx context.Context, wg *sync.WaitGroup, cancel func(), key topicPartitionKey, events chan int64) {
 			defer wg.Done()
 			for {
 				select {
@@ -186,7 +186,7 @@ func eventReadFromPartition(hasAssigned <-chan bool) func(c *Consumer, rd *rated
 			}
 		}
 
-		tickr := func(ctx context.Context, cancel func(), events chan int64) {
+		tickr := func(wg *sync.WaitGroup, events chan int64) {
 			defer wg.Done()
 			tick := <-events
 			// start measuring time from first message to avoid
@@ -195,36 +195,33 @@ func eventReadFromPartition(hasAssigned <-chan bool) func(c *Consumer, rd *rated
 			rd.reset()
 			rd.tick(1, tick)
 
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-					if rd.cnt >= int64(expCnt) {
-						cancel()
-						break
-					}
-					tick := <-events
-					rd.tick(1, tick)
+			for tick := range events {
+				if rd.cnt >= int64(expCnt) {
+					break
 				}
+				rd.tick(1, tick)
 			}
 		}
 
-		events := make(chan int64, 100)
+		events := make(chan int64, 10)
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second*300)
+		var wg = &sync.WaitGroup{}
 
 		wg.Add(1)
-		go pollForEvents(ctx, cancel, c)
+		go pollForEvents(ctx, wg, cancel, c)
 
-		wg.Add(1)
-		go tickr(ctx, cancel, events)
+		var tickerWg = &sync.WaitGroup{}
+		tickerWg.Add(1)
+		go tickr(tickerWg, events)
 
 		<-hasAssigned
 		for key, _ := range c.openTopParQueues {
 			wg.Add(1)
-			go readMessages(ctx, cancel, key, events)
+			go readMessages(ctx, wg, cancel, key, events)
 		}
 		wg.Wait()
+		close(events)
+		tickerWg.Wait()
 	}
 }
 
