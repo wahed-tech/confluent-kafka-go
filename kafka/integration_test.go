@@ -170,8 +170,8 @@ func eventTestPollConsumer(c *Consumer, mt *msgtracker, expCnt int) {
 func eventTestReadFromPartition(hasAssigned <-chan bool) func(c *Consumer, mt *msgtracker, expCnt int) {
 
 	return func(c *Consumer, mt *msgtracker, expCnt int) {
-		var wg = sync.WaitGroup{}
-		pollForEvents := func(ctx context.Context, cancel func(), c *Consumer, mt *msgtracker) {
+
+		pollForEvents := func(ctx context.Context, cancel func(), wg *sync.WaitGroup, c *Consumer, mt *msgtracker) {
 			defer wg.Done()
 			for {
 				select {
@@ -197,29 +197,24 @@ func eventTestReadFromPartition(hasAssigned <-chan bool) func(c *Consumer, mt *m
 			}
 		}
 
-		readMessages := func(ctx context.Context, cancel func(), k topicPartitionKey) {
+		tickr := func(ctx context.Context, cancel func(), wg *sync.WaitGroup, events chan*Message) {
 			defer wg.Done()
-			ticker := make(chan*Message, expCnt)
-			go func() {
-				for {
-					select {
-					case <-ctx.Done():
-						return
-					default:
-						tick := <-ticker
-						if mt.msgcnt >= int64(expCnt) {
-							cancel()
-							break
-						}
-						mt.msgs[mt.msgcnt] = tick
-						mt.msgcnt++
-						if mt.msgcnt >= int64(expCnt) {
-							cancel()
-							break
-						}
-					}
+			for tick := range events {
+				if mt.msgcnt >= int64(expCnt) {
+					break
 				}
-			}()
+				mt.msgs[mt.msgcnt] = tick
+				mt.msgcnt++
+				if mt.msgcnt >= int64(expCnt) {
+					break
+				}
+			}
+			cancel()
+		}
+
+		readMessages := func(ctx context.Context, cancel func(), wg *sync.WaitGroup, k topicPartitionKey, events chan*Message) {
+			defer wg.Done()
+
 			for {
 				select {
 				case <-ctx.Done():
@@ -235,23 +230,31 @@ func eventTestReadFromPartition(hasAssigned <-chan bool) func(c *Consumer, mt *m
 						continue
 					}
 					mt.t.Logf("from partition queue %v", ev)
-					handleConcurrentTestEvent(ticker, mt, ev)
+					handleConcurrentTestEvent(ctx, events, mt, ev)
 				}
 			}
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
+		var wg = &sync.WaitGroup{}
 		wg.Add(1)
-		go pollForEvents(ctx, cancel, c, mt)
+		go pollForEvents(ctx, cancel, wg, c, mt)
+
+		events := make(chan*Message, expCnt)
+		var tickerWg = &sync.WaitGroup{}
+		tickerWg.Add(1)
+		go tickr(ctx, cancel, tickerWg, events)
 
 		<-hasAssigned // wait for first partition assignment
 		mt.t.Log(fmt.Sprintf("%d partitions, at %v", len(c.openTopParQueues), time.Now()))
 		for toppar, _ := range c.openTopParQueues {
 			wg.Add(1)
-			go readMessages(ctx, cancel, toppar)
+			go readMessages(ctx, cancel, wg, toppar, events)
 		}
 
 		wg.Wait()
+		close(events)
+		tickerWg.Wait()
 	}
 }
 
@@ -285,14 +288,18 @@ func handleTestEvent(c *Consumer, mt *msgtracker, expCnt int, ev Event) bool {
 }
 
 
-func handleConcurrentTestEvent(ticker chan <- *Message, mt *msgtracker, ev Event) {
+func handleConcurrentTestEvent(ctx context.Context, ticker chan <- *Message, mt *msgtracker, ev Event) {
 	switch e := ev.(type) {
 	case *Message:
 		if e.TopicPartition.Error != nil {
 			mt.t.Logf("Error: %v", e.TopicPartition)
 			return
 		}
-		ticker <- e
+		select {
+		case <-ctx.Done():
+		default:
+			ticker <- e
+		}
 	case PartitionEOF:
 		break // silence
 	default:
