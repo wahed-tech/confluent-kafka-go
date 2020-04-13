@@ -293,14 +293,12 @@ func BenchmarkConsumerReadFromPartitionPerformance(b *testing.B) {
 				if err := c.Unassign(); err != nil {
 					b.Errorf("Failed to Unassign: %s\n", err)
 				}
-				b.Logf("RevokedPartitions at %v", time.Now())
 			}
 			if ap, ok := event.(AssignedPartitions); ok {
 				if err := c.Assign(ap.Partitions); err != nil {
 					b.Errorf("Failed to Assign: %s\n", err)
 				}
 				hasAssigned <- true
-				b.Logf("AssignedPartitions at %v", time.Now())
 			}
 			return nil
 		})
