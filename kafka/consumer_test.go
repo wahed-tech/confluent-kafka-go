@@ -42,8 +42,8 @@ func TestConsumerAPIs(t *testing.T) {
 func testConsumerAPIs(t *testing.T, cm *ConfigMap) {
 
 	c, err := NewConsumer(&ConfigMap{})
-	if err != nil {
-		t.Fatalf("%s", err)
+	if err == nil {
+		t.Fatalf("Expected NewConsumer() to fail without group.id")
 	}
 
 	c, err = NewConsumer(cm)
